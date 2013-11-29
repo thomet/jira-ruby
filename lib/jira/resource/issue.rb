@@ -29,7 +29,11 @@ module JIRA
 
       has_many :versions, :nested_under => 'fields'
 
-      has_many :worklogs, :nested_under => ['fields','worklog']
+      def initialize(client, options = {})
+        super(client, options)
+        @linked_outward_isses = {}
+        @linked_inward_issues = {}
+      end
 
       def self.all(client)
         response = client.get(client.options[:rest_base_path] + "/search")
@@ -39,13 +43,47 @@ module JIRA
         end
       end
 
-      def self.jql(client, jql)
-        url = client.options[:rest_base_path] + "/search?jql=" + CGI.escape(jql)
+      def self.jql(client, jql, max_results = 50)
+        url = client.options[:rest_base_path] + "/search?jql=" + CGI.escape(jql) + "&maxResults=#{max_results}"
         response = client.get(url)
         json = parse_json(response.body)
         json['issues'].map do |issue|
           client.Issue.build(issue)
         end
+      end
+
+      def parent
+        @parent ||= if attrs.keys.include?('fields') && attrs['fields'].keys.include?('parent')
+           client.Issue.find(attrs['fields']['parent']['key'])
+        end
+      end
+
+      def subtasks
+        @subtasks ||= if attrs.keys.include?('fields') && attrs['fields'].keys.include?('subtasks')
+          attrs['fields']['subtasks'].map{|sub| client.Issue.find(sub['key']) }
+        else
+          []
+        end
+      end
+
+      def linked_outward_isses(issue, outward_filter_type = nil)
+        @linked_outward_isses[outward_filter_type] ||= issue.issuelinks.map do |issue_link|
+          if issue_link['outwardIssue'] && (!inward_filter_type || issue_link['type']['outward'] == outward_filter_type)
+            @client.Issue.find(issue_link['outwardIssue']['key'])
+          end
+        end.compact
+      end
+
+      def linked_inward_issues(issue, inward_filter_type = nil)
+        @linked_inward_issues[inward_filter_type] ||= issue.issuelinks.map do |issue_link|
+          if issue_link['inwardIssue'] && (!inward_filter_type || issue_link['type']['inward'] == inward_filter_type)
+            @client.Issue.find(issue_link['inwardIssue']['key'])
+          end
+        end.compact
+      end
+
+      def worklogs
+        @worklogs ||= @client.Worklog.all(key)
       end
 
       def respond_to?(method_name)
